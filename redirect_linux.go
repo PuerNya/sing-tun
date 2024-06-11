@@ -12,6 +12,8 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
+
+	"go4.org/netipx"
 )
 
 type autoRedirect struct {
@@ -30,6 +32,8 @@ type autoRedirect struct {
 	useNFTables            bool
 	androidSu              bool
 	suPath                 string
+	routeAddressSet        *[]*netipx.IPSet
+	routeExcludeAddressSet *[]*netipx.IPSet
 }
 
 func NewAutoRedirect(options AutoRedirectOptions) (AutoRedirect, error) {
@@ -41,6 +45,8 @@ func NewAutoRedirect(options AutoRedirectOptions) (AutoRedirect, error) {
 		tableName:              options.TableName,
 		useNFTables:            runtime.GOOS != "android" && !options.DisableNFTables,
 		customRedirectPortFunc: options.CustomRedirectPort,
+		routeAddressSet:        options.RouteAddressSet,
+		routeExcludeAddressSet: options.RouteExcludeAddressSet,
 	}
 	var err error
 	if runtime.GOOS == "android" {
@@ -132,6 +138,14 @@ func (r *autoRedirect) Close() error {
 	return common.Close(
 		common.PtrOrNil(r.redirectServer),
 	)
+}
+
+func (r *autoRedirect) UpdateRouteAddressSet() error {
+	if r.useNFTables {
+		return r.nftablesUpdateRouteAddressSet()
+	} else {
+		return nil
+	}
 }
 
 func (r *autoRedirect) initializeNFTables() error {

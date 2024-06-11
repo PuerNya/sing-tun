@@ -48,8 +48,10 @@ type Options struct {
 	MTU                      uint32
 	GSO                      bool
 	AutoRoute                bool
+	AutoRedirect             bool
 	DNSServers               []netip.Addr
 	IPRoute2RuleIndex        int
+	AutoRedirectFWMark       uint32
 	StrictRoute              bool
 	Inet4RouteAddress        []netip.Prefix
 	Inet6RouteAddress        []netip.Prefix

@@ -3,14 +3,15 @@
 package tun
 
 import (
-	"net"
 	"net/netip"
+	"unsafe"
 
 	"github.com/sagernet/nftables"
 	"github.com/sagernet/nftables/binaryutil"
 	"github.com/sagernet/nftables/expr"
-	"github.com/sagernet/sing/common/ranges"
+	"github.com/sagernet/sing/common"
 
+	"go4.org/netipx"
 	"golang.org/x/sys/unix"
 )
 
@@ -18,92 +19,6 @@ func nftablesIfname(n string) []byte {
 	b := make([]byte, 16)
 	copy(b, n+"\x00")
 	return b
-}
-
-func nftablesRuleIfName(key expr.MetaKey, value string, exprs ...expr.Any) []expr.Any {
-	newExprs := []expr.Any{
-		&expr.Meta{Key: key, Register: 1},
-		&expr.Cmp{
-			Op:       expr.CmpOpEq,
-			Register: 1,
-			Data:     nftablesIfname(value),
-		},
-	}
-	newExprs = append(newExprs, exprs...)
-	return newExprs
-}
-
-func nftablesRuleMetaUInt32Range(key expr.MetaKey, uidRange ranges.Range[uint32], exprs ...expr.Any) []expr.Any {
-	newExprs := []expr.Any{
-		&expr.Meta{Key: key, Register: 1},
-		&expr.Range{
-			Op:       expr.CmpOpEq,
-			Register: 1,
-			FromData: binaryutil.BigEndian.PutUint32(uidRange.Start),
-			ToData:   binaryutil.BigEndian.PutUint32(uidRange.End),
-		},
-	}
-	newExprs = append(newExprs, exprs...)
-	return newExprs
-}
-
-func nftablesRuleDestinationAddress(address netip.Prefix, exprs ...expr.Any) []expr.Any {
-	newExprs := []expr.Any{
-		&expr.Meta{
-			Key:      expr.MetaKeyNFPROTO,
-			Register: 1,
-		},
-	}
-	if address.Addr().Is4() {
-		newExprs = append(newExprs,
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     []byte{unix.NFPROTO_IPV4},
-			},
-			&expr.Payload{
-				OperationType:  expr.PayloadLoad,
-				DestRegister:   1,
-				SourceRegister: 0,
-				Base:           expr.PayloadBaseNetworkHeader,
-				Offset:         16,
-				Len:            4,
-			}, &expr.Bitwise{
-				SourceRegister: 1,
-				DestRegister:   1,
-				Len:            4,
-				Xor:            make([]byte, 4),
-				Mask:           net.CIDRMask(address.Bits(), 32),
-			})
-	} else {
-		newExprs = append(newExprs,
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     []byte{unix.NFPROTO_IPV6},
-			},
-			&expr.Payload{
-				OperationType:  expr.PayloadLoad,
-				DestRegister:   1,
-				SourceRegister: 0,
-				Base:           expr.PayloadBaseNetworkHeader,
-				Offset:         24,
-				Len:            16,
-			}, &expr.Bitwise{
-				SourceRegister: 1,
-				DestRegister:   1,
-				Len:            16,
-				Xor:            make([]byte, 16),
-				Mask:           net.CIDRMask(address.Bits(), 128),
-			})
-	}
-	newExprs = append(newExprs, &expr.Cmp{
-		Op:       expr.CmpOpEq,
-		Register: 1,
-		Data:     address.Masked().Addr().AsSlice(),
-	})
-	newExprs = append(newExprs, exprs...)
-	return newExprs
 }
 
 func nftablesRuleHijackDNS(family nftables.TableFamily, dnsServerAddress netip.Addr) []expr.Any {
@@ -127,12 +42,11 @@ func nftablesRuleHijackDNS(family nftables.TableFamily, dnsServerAddress netip.A
 			Data:     []byte{unix.IPPROTO_UDP},
 		},
 		&expr.Payload{
-			OperationType:  expr.PayloadLoad,
-			DestRegister:   1,
-			SourceRegister: 0,
-			Base:           expr.PayloadBaseTransportHeader,
-			Offset:         2,
-			Len:            2,
+			OperationType: expr.PayloadLoad,
+			DestRegister:  1,
+			Base:          expr.PayloadBaseTransportHeader,
+			Offset:        2,
+			Len:           2,
 		}, &expr.Cmp{
 			Op:       expr.CmpOpEq,
 			Register: 1,
@@ -148,32 +62,165 @@ func nftablesRuleHijackDNS(family nftables.TableFamily, dnsServerAddress netip.A
 	}
 }
 
-const (
-	NF_NAT_RANGE_MAP_IPS = 1 << iota
-	NF_NAT_RANGE_PROTO_SPECIFIED
-	NF_NAT_RANGE_PROTO_RANDOM
-	NF_NAT_RANGE_PERSISTENT
-	NF_NAT_RANGE_PROTO_RANDOM_FULLY
-	NF_NAT_RANGE_PROTO_OFFSET
-)
+func ipSetHas4(setList []*netipx.IPSet) bool {
+	/*return common.Any(setList, func(it *netipx.IPSet) bool {
+		mySet := (*myIPSet)(unsafe.Pointer(it))
+		return common.Any(mySet.rr, func(it myIPRange) bool {
+			return it.from.Is4()
+		})
+	})*/
+	return common.Any(setList, func(it *netipx.IPSet) bool {
+		mySet := (*myIPSet)(unsafe.Pointer(it))
+		return mySet.rr[0].from.Is4()
+	})
+}
 
-func nftablesRuleRedirectToPorts(redirectPort uint16) []expr.Any {
-	return []expr.Any{
+func ipSetHas6(setList []*netipx.IPSet) bool {
+	/*return common.Any(setList, func(it *netipx.IPSet) bool {
+		mySet := (*myIPSet)(unsafe.Pointer(it))
+		return common.Any(mySet.rr, func(it myIPRange) bool {
+			return it.from.Is6()
+		})
+	})*/
+	return common.Any(setList, func(it *netipx.IPSet) bool {
+		mySet := (*myIPSet)(unsafe.Pointer(it))
+		return mySet.rr[len(mySet.rr)-1].from.Is6()
+	})
+}
+
+func nftablesRuleDestinationIPSet(id uint32, name string, family nftables.TableFamily, invert bool, exprs []expr.Any) []expr.Any {
+	var newExprs []expr.Any
+	newExprs = append(newExprs,
 		&expr.Meta{
-			Key:      expr.MetaKeyL4PROTO,
+			Key:      expr.MetaKeyNFPROTO,
 			Register: 1,
 		},
 		&expr.Cmp{
 			Op:       expr.CmpOpEq,
 			Register: 1,
-			Data:     []byte{unix.IPPROTO_TCP},
+			Data:     []byte{byte(family)},
 		},
-		&expr.Immediate{
-			Register: 1,
-			Data:     binaryutil.BigEndian.PutUint16(redirectPort),
-		}, &expr.Redir{
-			RegisterProtoMin: 1,
-			Flags:            NF_NAT_RANGE_PROTO_SPECIFIED,
-		},
+	)
+	if family == nftables.TableFamilyIPv4 {
+		newExprs = append(newExprs,
+			&expr.Payload{
+				OperationType: expr.PayloadLoad,
+				DestRegister:  1,
+				Base:          expr.PayloadBaseNetworkHeader,
+				Offset:        16,
+				Len:           4,
+			},
+		)
+	} else {
+		newExprs = append(newExprs,
+			&expr.Payload{
+				OperationType: expr.PayloadLoad,
+				DestRegister:  1,
+				Base:          expr.PayloadBaseNetworkHeader,
+				Offset:        24,
+				Len:           16,
+			},
+		)
 	}
+	newExprs = append(newExprs, &expr.Lookup{
+		SourceRegister: 1,
+		SetID:          id,
+		SetName:        name,
+		Invert:         invert,
+	})
+	newExprs = append(newExprs, exprs...)
+	return newExprs
+}
+
+func nftablesCreateIPSet(nft *nftables.Conn, table *nftables.Table, id uint32, name string, family nftables.TableFamily, setList []*netipx.IPSet, prefixList []netip.Prefix, invert bool, update bool) error {
+	ipSets := make([]*myIPSet, 0, len(setList))
+	var rangeLen int
+	for _, set := range setList {
+		mySet := (*myIPSet)(unsafe.Pointer(set))
+		ipSets = append(ipSets, mySet)
+		rangeLen += len(mySet.rr)
+	}
+	setElements := make([]nftables.SetElement, 0, len(prefixList)+rangeLen)
+	for _, mySet := range ipSets {
+		for _, rr := range mySet.rr {
+			if (family == nftables.TableFamilyIPv4) != rr.from.Is4() {
+				continue
+			}
+
+			setElements = append(setElements, nftables.SetElement{
+				Key: rr.from.AsSlice(),
+			})
+			setElements = append(setElements, nftables.SetElement{
+				Key:         rr.to.Next().AsSlice(),
+				IntervalEnd: true,
+			})
+		}
+	}
+	if invert && len(setElements) == 0 && len(prefixList) == 0 {
+		if family == nftables.TableFamilyIPv4 {
+			prefixList = append(prefixList, netip.PrefixFrom(netip.IPv4Unspecified(), 0))
+		} else {
+			prefixList = append(prefixList, netip.PrefixFrom(netip.IPv6Unspecified(), 0))
+		}
+	}
+	for _, prefix := range prefixList {
+		rangeOf := netipx.RangeOfPrefix(prefix)
+		setElements = append(setElements, nftables.SetElement{
+			Key: rangeOf.From().AsSlice(),
+		})
+		endAddr := rangeOf.To().Next()
+		if !endAddr.IsValid() {
+			endAddr = rangeOf.From()
+		}
+		setElements = append(setElements, nftables.SetElement{
+			Key:         endAddr.AsSlice(),
+			IntervalEnd: true,
+		})
+	}
+	var keyType nftables.SetDatatype
+	if family == nftables.TableFamilyIPv4 {
+		keyType = nftables.TypeIPAddr
+	} else {
+		keyType = nftables.TypeIP6Addr
+	}
+	mySet := &nftables.Set{
+		Table:    table,
+		ID:       id,
+		Name:     name,
+		Interval: true,
+		KeyType:  keyType,
+	}
+	if update {
+		nft.FlushSet(mySet)
+	} else {
+		err := nft.AddSet(mySet, nil)
+		if err != nil {
+			return err
+		}
+	}
+	for len(setElements) > 0 {
+		toAdd := setElements
+		if len(toAdd) > 1000 {
+			toAdd = toAdd[:1000]
+		}
+		setElements = setElements[len(toAdd):]
+		err := nft.SetAddElements(mySet, toAdd)
+		if err != nil {
+			return err
+		}
+		err = nft.Flush()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type myIPSet struct {
+	rr []myIPRange
+}
+
+type myIPRange struct {
+	from netip.Addr
+	to   netip.Addr
 }

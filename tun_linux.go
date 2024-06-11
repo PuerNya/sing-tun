@@ -415,6 +415,27 @@ func (t *NativeTun) rules() []*netlink.Rule {
 	priority6 := priority
 	nopPriority := ruleStart + 10
 
+	if t.options.AutoRedirect {
+		if p4 {
+			it = netlink.NewRule()
+			it.Priority = priority
+			it.Mark = t.options.AutoRedirectFWMark
+			it.MarkSet = true
+			it.Family = unix.AF_INET
+			it.Goto = nopPriority
+			rules = append(rules, it)
+		}
+		if p6 {
+			it = netlink.NewRule()
+			it.Priority = priority6
+			it.Mark = t.options.AutoRedirectFWMark
+			it.MarkSet = true
+			it.Family = unix.AF_INET6
+			it.Goto = nopPriority
+			rules = append(rules, it)
+		}
+	}
+
 	for _, excludeRange := range excludeRanges {
 		if p4 {
 			it = netlink.NewRule()
@@ -433,7 +454,7 @@ func (t *NativeTun) rules() []*netlink.Rule {
 			rules = append(rules, it)
 		}
 	}
-	if len(excludeRanges) > 0 {
+	if t.options.AutoRedirect || len(excludeRanges) > 0 {
 		if p4 {
 			priority++
 		}
