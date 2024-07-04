@@ -48,6 +48,9 @@ func (o *Options) BuildAndroidRules(packageManager PackageManager) {
 	if len(includeUser) == 0 {
 		includeUser = []uint32{0}
 	}
+	if packageManager == nil {
+		return
+	}
 	if len(o.IncludePackage) > 0 {
 		o.IncludePackage = common.Uniq(o.IncludePackage)
 		for _, packageName := range o.IncludePackage {
