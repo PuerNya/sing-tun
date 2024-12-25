@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -178,7 +179,7 @@ func (t *NativeTun) Start() error {
 		} else {
 			err = luid.AddRoute(routeRange, gateway6, 0)
 		}
-		if err != nil {
+		if err != nil && !strings.Contains(err.Error(), "object already exists") {
 			return err
 		}
 	}
