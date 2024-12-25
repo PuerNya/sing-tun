@@ -123,6 +123,7 @@ func (s *System) start() error {
 	}
 	var tcpListener net.Listener
 	if s.inet4Address.IsValid() {
+		var err error
 		for i := 0; i < 3; i++ {
 			tcpListener, err = listener.Listen(s.ctx, "tcp4", net.JoinHostPort(s.inet4ServerAddress.String(), "0"))
 			if !retryableListenError(err) {
@@ -131,13 +132,15 @@ func (s *System) start() error {
 			time.Sleep(time.Second)
 		}
 		if err != nil {
-			return err
+			s.logger.Warn(E.Cause(err, "bind ipv4 address failed"))
+		} else {
+			s.tcpListener = tcpListener
+			s.tcpPort = M.SocksaddrFromNet(tcpListener.Addr()).Port
+			go s.acceptLoop(tcpListener)
 		}
-		s.tcpListener = tcpListener
-		s.tcpPort = M.SocksaddrFromNet(tcpListener.Addr()).Port
-		go s.acceptLoop(tcpListener)
 	}
 	if s.inet6Address.IsValid() {
+		var err error
 		for i := 0; i < 3; i++ {
 			tcpListener, err = listener.Listen(s.ctx, "tcp6", net.JoinHostPort(s.inet6ServerAddress.String(), "0"))
 			if !retryableListenError(err) {
@@ -146,11 +149,15 @@ func (s *System) start() error {
 			time.Sleep(time.Second)
 		}
 		if err != nil {
-			return err
+			s.logger.Warn(E.Cause(err, "bind ipv6 address failed"))
+		} else {
+			s.tcpListener6 = tcpListener
+			s.tcpPort6 = M.SocksaddrFromNet(tcpListener.Addr()).Port
+			go s.acceptLoop(tcpListener)
 		}
-		s.tcpListener6 = tcpListener
-		s.tcpPort6 = M.SocksaddrFromNet(tcpListener.Addr()).Port
-		go s.acceptLoop(tcpListener)
+	}
+	if s.tcpListener == nil && s.tcpListener6 == nil {
+		return E.New("missing listener")
 	}
 	s.tcpNat = NewNat(s.ctx, s.udpTimeout)
 	s.udpNat = udpnat.New(s.handler, s.preparePacketConnection, s.udpTimeout, false)
